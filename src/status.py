@@ -13,7 +13,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 _CACHE_SECONDS = 30
-_PROCESS_STARTED = time.monotonic()
+_MODULE_LOADED_AT = time.monotonic()
 _cache_lock = threading.Lock()
 _cache_at = 0.0
 _cache_value = None
@@ -58,17 +58,26 @@ def _number(path):
 
 def _memory_limit():
     # cgroup v2 then v1; only read fixed system files.
-    return _number("/sys/fs/cgroup/memory.max") or _number("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        value = _number(path)
+        if value is not None and value > 0 and value < 2**60:
+            return value
+    return None
 
 def _cpu_limit():
     quota = _read("/sys/fs/cgroup/cpu.max")
     if quota:
         fields = quota.split()
         try:
-            if len(fields) == 2 and fields[0] != "max": return round(int(fields[0]) / int(fields[1]), 2)
-        except (ValueError, ZeroDivisionError): pass
+            if len(fields) == 2:
+                if fields[0] == "max":
+                    return None
+                q, p = int(fields[0]), int(fields[1])
+                return round(q / p, 2) if q > 0 and p > 0 else None
+        except (ValueError, ZeroDivisionError):
+            return None
     q, p = _number("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"), _number("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
-    return round(q / p, 2) if q and p else None
+    return round(q / p, 2) if q is not None and p is not None and q > 0 and p > 0 else None
 
 def _probe(name, args, pattern):
     exe = shutil.which(name, path=_FIXED_PATH)
@@ -103,7 +112,7 @@ def _collect():
         disk_data = None
     return {
         "scope": "单次函数执行所见的临时运行实例；不是账户配额、独占硬件、平台 uptime 或持续可用性保证。",
-        "process_uptime_seconds": round(time.monotonic() - _PROCESS_STARTED, 3),
+        "module_age_seconds": round(time.monotonic() - _MODULE_LOADED_AT, 3),
         "runtime": {"python": platform.python_version(), "os": platform.system(), "architecture": platform.machine()},
         "resources": {"cpu_limit_cores": _cpu_limit(), "memory_limit_bytes": _memory_limit(), "memory_limit": format_bytes(_memory_limit()), "mounted_root_disk": disk_data},
         "tools": cli,
@@ -125,7 +134,7 @@ def render_page(status):
     py = html.escape(status["runtime"]["python"])
     os_name = html.escape(status["runtime"]["os"])
     arch = html.escape(status["runtime"]["architecture"])
-    uptime = html.escape(format_duration(status["process_uptime_seconds"]))
+    module_age = html.escape(format_duration(status["module_age_seconds"]))
     cpu = html.escape(str(status["resources"]["cpu_limit_cores"] if status["resources"]["cpu_limit_cores"] is not None else "不可用"))
     mem = html.escape(status["resources"]["memory_limit"])
     disk = status["resources"]["mounted_root_disk"]
@@ -133,4 +142,4 @@ def render_page(status):
     tools = "".join(f"<li><span>{html.escape(name)}</span><strong>{html.escape(info['version'] or ('已安装' if info['installed'] else '未安装'))}</strong></li>" for name, info in status["tools"].items())
     disclaimer = html.escape(status["scope"])
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Appwrite Functions · 状态</title><style>
-:root{{--bg:#101014;--panel:#19191d;--line:#303037;--text:#f4f2f4;--muted:#aaa7ae;--pink:#fd366e}}*{{box-sizing:border-box}}body{{margin:0;background:radial-gradient(ellipse at 90% 0%,#381725 0,transparent 36%),var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}}main{{width:min(940px,100% - 32px);margin:0 auto;padding:40px 0 56px}}header{{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:28px}}.eyebrow{{color:var(--pink);font-size:.78rem;font-weight:800;letter-spacing:.14em;text-transform:uppercase}}h1{{font-size:clamp(1.8rem,5vw,3rem);line-height:1.1;margin:8px 0}}p{{color:var(--muted)}}a{{color:#ff89a9}}.repo{{font-weight:700;white-space:nowrap}}.notice{{padding:18px 20px;border:1px solid #713047;background:#26151c;border-radius:14px;margin:20px 0 24px}}.notice strong{{color:#ff91ad}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}}.card{{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:20px;min-height:126px}}.label{{color:var(--muted);font-size:.9rem}}.value{{font-size:1.35rem;font-weight:750;margin-top:9px;overflow-wrap:anywhere}}h2{{font-size:1.2rem;margin:32px 0 12px}}ul{{list-style:none;padding:0;margin:0}}li{{display:flex;justify-content:space-between;gap:16px;padding:12px 15px;background:var(--panel);border:1px solid var(--line);border-bottom:0}}li:first-child{{border-radius:12px 12px 0 0}}li:last-child{{border-bottom:1px solid var(--line);border-radius:0 0 12px 12px}}li strong{{text-align:right;overflow-wrap:anywhere}}footer{{margin-top:28px;color:var(--muted);font-size:.9rem}}@media(max-width:520px){{header{{align-items:flex-start;flex-direction:column}}.repo{{white-space:normal}}}}</style></head><body><main><header><div><div class="eyebrow">APPWRITE CLOUD · FUNCTIONS</div><h1>函数运行状态</h1><p>按需执行环境的只读快照</p></div><a class="repo" href="https://github.com/mathowvan/appwrite-status">GitHub 项目 ↗</a></header><section class="notice"><strong>临时实例范围</strong><br>{disclaimer}<br>手动刷新以获取新快照；本页面不轮询、不做保活。</section><section class="grid"><article class="card"><div class="label">本次进程存活时长</div><div class="value">{uptime}</div></article><article class="card"><div class="label">Python · 操作系统 · 架构</div><div class="value">{py}<br>{os_name} · {arch}</div></article><article class="card"><div class="label">可读 CPU 限额（核）</div><div class="value">{cpu}</div></article><article class="card"><div class="label">可读内存限制</div><div class="value">{mem}</div></article><article class="card"><div class="label">当前根挂载磁盘</div><div class="value">{disk_text}</div></article></section><h2>固定工具探测</h2><ul>{tools}</ul><footer>只展示本地安全读数。资源数值不代表 Appwrite 账户配额、独占硬件或函数可用性。<br><a href="/api/status">JSON 状态 API</a> · <a href="/healthz">健康检查</a></footer></main></body></html>'''
+<style>:root{{--bg:#101014;--panel:#19191d;--line:#303037;--text:#f4f2f4;--muted:#aaa7ae;--pink:#fd366e}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}}main{{width:min(940px,100% - 32px);margin:auto;padding:40px 0}}.card,li,.notice{{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:16px;margin:12px 0}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}}.label{{color:var(--muted)}}.value{{font-size:1.3rem;font-weight:700}}a{{color:#ff89a9}}</style></head><body><main><header><div><div>APPWRITE CLOUD · FUNCTIONS</div><h1>函数运行状态</h1><p>按需执行环境的只读快照</p></div><a href="https://github.com/mathowvan/appwrite-status">GitHub 项目 ↗</a></header><section class="notice"><strong>临时实例范围</strong><br>{disclaimer}<br>手动刷新以获取新快照；本页面不轮询、不做保活。</section><section class="grid"><article class="card"><div class="label">函数模块载入时长</div><div class="value">{module_age}</div></article><article class="card"><div class="label">Python · 操作系统 · 架构</div><div class="value">{py}<br>{os_name} · {arch}</div></article><article class="card"><div class="label">可读 CPU 限额（核）</div><div class="value">{cpu}</div></article><article class="card"><div class="label">可读内存限制</div><div class="value">{mem}</div></article><article class="card"><div class="label">当前根挂载磁盘</div><div class="value">{disk_text}</div></article></section><h2>固定工具探测</h2><ul>{tools}</ul><footer>只展示本地安全读数。资源数值不代表 Appwrite 账户配额、独占硬件或函数可用性。<br><a href="/api/status">JSON 状态 API</a> · <a href="/healthz">健康检查</a></footer></main></body></html>'''
