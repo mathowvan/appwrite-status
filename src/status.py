@@ -279,7 +279,7 @@ def _collect():
         ssl_version = ssl.OPENSSL_VERSION
     except Exception:
         ssl_version = None
-    scope = "仅当前函数模块、Python 进程、通过成员根目录验证的 cgroup、根挂载与当前网络命名空间；挂载和网络可能共享，地址及出口可能临时变化。不是主机、套餐或账户配额。"
+    scope = "仅当前函数模块、Python 进程、通过成员根目录验证的 cgroup、根挂载与当前网络命名空间；挂载和网络可能共享，地址可能临时变化。不是主机、套餐或账户配额。"
     cpu_limit, swap, cpu_stat, process = _cpu_limit(), _swap_stats(), _cpu_stats(), _process_stats()
     network = collect_network()
     return {"snapshot_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -293,7 +293,7 @@ def _collect():
                           "swap": swap, "cgroup_cpu_stat": cpu_stat, "process": process,
                           "mounted_root_disk": disk or None}, "tools": cli, "cache_seconds": _CACHE_SECONDS,
             "network": network,
-            "note": "快照由请求触发；无轮询、扫描或保活。CPU/cgroup 和网络计数为累计值，不是实时速率；缓存命中时不重新采集。出口 IP 每个暖进程至多发起一次固定 HTTPS 观测，成功或失败均不重试。"}
+            "note": "快照由请求触发；无轮询、扫描或保活。CPU/cgroup 和网络计数为累计值，不是实时速率；缓存命中时不重新采集。网络字段仅反映当前本地网络命名空间，不进行外部查询。"}
 
 
 def get_status():
@@ -355,7 +355,7 @@ def render_page(status):
                    ("本次采集耗时", format_duration(status.get("collection_seconds")) if status.get("collection_seconds") is not None else None),
                    ("暖进程缓存", f'{status["cache_seconds"]} 秒' if status.get("cache_seconds") is not None else None)]
     tools = "".join(f'<div class="row"><dt>{esc(name)}</dt><dd>{esc(info.get("version") or ("已安装" if info.get("installed") else "未安装"))}</dd></div>' for name, info in (status.get("tools") or {}).items())
-    network_rows = []
+    network_rows = [("本地接口枚举", {"available": "可用", "unavailable": "不可用"}.get(network.get("local_status")))]
     for interface in (network.get("interfaces") or [])[:16]:
         name = interface.get("name", "接口")
         if interface.get("ipv4"):
@@ -381,13 +381,8 @@ def render_page(status):
     gateway = network.get("default_ipv4_gateway") or {}
     if gateway.get("ipv4"):
         network_rows.append((f'默认网关 · {gateway.get("interface", "IPv4")}', gateway["ipv4"]))
-    egress = network.get("egress_ip") or {}
-    network_rows.extend(((f'出口 IPv{egress.get("family", "4/6")}（HTTPS 观测）', egress.get("ip") or "本次不可用（不推测）"),
-                         ("出口观测来源", network.get("egress_provider")),
-                         ("出口观测 UTC", egress.get("observed_at")),
-                         ("出口查询策略", "本暖进程至多一次；失败不重试" if network.get("egress_probe_policy") else None)))
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Appwrite Functions · 状态</title><style>
 :root{{--bg:#0b0d17;--panel:#111b2a;--line:#2a3543;--text:#edf2f8;--muted:#a7b4c5;--accent:#a8caff}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}main{{width:min(1060px,calc(100% - 40px));margin:0 auto;padding:52px 0 36px}}header{{margin-bottom:32px}}.eyebrow{{color:var(--muted);font-size:.78rem;letter-spacing:.12em}}h1{{margin:8px 0 12px;font-size:clamp(2rem,4vw,2.75rem);line-height:1.2;letter-spacing:-.03em}}header p{{margin:0 0 14px;color:var(--muted)}}.source{{color:var(--muted);overflow-wrap:anywhere}}a{{color:var(--accent);text-underline-offset:3px}}a:hover{{color:#d2e3ff}}a:focus-visible{{outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}}.grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}}.card{{min-width:0;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:18px;box-shadow:0 0 0 1px #ffffff03 inset}}.card h2{{margin:0 0 18px;color:var(--accent);font-size:1.12rem;line-height:1.35}}dl{{margin:0;padding:0}}.row{{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #ffffff12}}.row:last-child{{padding-bottom:0;border-bottom:0}}.row:first-child{{padding-top:0}}dt{{color:var(--muted);min-width:0}}dd{{margin:0;text-align:right;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}}.notice{{margin:24px 0 0;padding:18px 20px;border:1px solid var(--line);border-radius:14px;color:var(--muted);line-height:1.7}}footer{{margin-top:22px;color:var(--muted);font-size:.875rem;line-height:1.8}}@media(max-width:820px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}@media(max-width:560px){{main{{width:calc(100% - 32px);padding-top:30px}}header{{margin-bottom:24px}}.grid{{grid-template-columns:minmax(0,1fr);gap:14px}}.card{{padding:18px}}.card h2{{margin-bottom:16px}}.notice{{padding:16px}}}}
 .card h3{{margin:20px 0 12px;color:var(--accent);font-size:.95rem}}.hint{{margin:16px 0 0;color:var(--muted);font-size:.8rem;line-height:1.7}}
 </style></head><body><main><header><div class="eyebrow">APPWRITE CLOUD · FUNCTIONS</div><h1>函数运行状态</h1><p>按需执行环境的只读快照</p><div class="source">公开源码仓库：<a href="https://github.com/mathowvan/appwrite-status">github.com/mathowvan/appwrite-status</a></div></header><section class="grid" aria-label="运行环境状态">
-<article class="card"><h2>内存与进程</h2><dl>{rows(mem_rows)}</dl></article><article class="card"><h2>根挂载磁盘</h2><dl>{rows(disk_rows)}</dl></article><article class="card"><h2>CPU</h2><dl>{rows(cpu_rows)}</dl></article><article class="card"><h2>运行时与工具</h2><dl>{rows(runtime_rows)}</dl><h3>固定工具探测</h3><dl>{tools}</dl></article><article class="card"><h2>网络与 IP</h2><dl>{rows(network_rows)}</dl><p class="hint">本地来源：Linux 只读 ioctl 与 /proc/net；仅当前网络命名空间，可能共享，地址可能临时变化。接口流量是累计值，不是速率或项目月带宽。出口来源：api.ipify.org 对一次固定 HTTPS 请求的观测，可能共享 NAT，不代表入站可达。每个暖进程至多查询一次，失败也不重试；无后台更新。</p></article><article class="card"><h2>模块与快照</h2><dl>{rows(module_rows)}</dl></article></section><section class="notice">范围：{esc(status.get("scope", ""))}<br>CPU/cgroup 与网络计数为累计值；缓存命中不重新采集。成员路径无法验证时省略 cgroup 详细读数；手动刷新获取新快照，本页不轮询、不保活。</section><footer>资源数值不代表主机、套餐或账户配额。外部出口观测服务可见函数本次出站 IP；不发送本地接口读数、请求内容或凭据。<br><a href="/api/status">JSON 状态 API</a> · <a href="/healthz">健康检查</a></footer></main></body></html>'''
+<article class="card"><h2>内存与进程</h2><dl>{rows(mem_rows)}</dl></article><article class="card"><h2>根挂载磁盘</h2><dl>{rows(disk_rows)}</dl></article><article class="card"><h2>CPU</h2><dl>{rows(cpu_rows)}</dl></article><article class="card"><h2>运行时与工具</h2><dl>{rows(runtime_rows)}</dl><h3>固定工具探测</h3><dl>{tools}</dl></article><article class="card"><h2>网络与 IP</h2><dl>{rows(network_rows)}</dl><p class="hint">local_only：仅当前网络命名空间的 Linux 只读 ioctl 与 /proc/net 数据，无任何外部查询。地址可能临时或共享，不代表公网地址或入站可达。接口流量是累计值，不是速率或项目月带宽。</p></article><article class="card"><h2>模块与快照</h2><dl>{rows(module_rows)}</dl></article></section><section class="notice">范围：{esc(status.get("scope", ""))}<br>CPU/cgroup 与网络计数为累计值；缓存命中不重新采集。成员路径无法验证时省略 cgroup 详细读数；手动刷新获取新快照，本页不轮询、不保活。</section><footer>资源数值不代表主机、套餐或账户配额。网络信息仅来自当前本地网络命名空间；本应用不查询公网出口地址。<br><a href="/api/status">JSON 状态 API</a> · <a href="/healthz">健康检查</a></footer></main></body></html>'''
