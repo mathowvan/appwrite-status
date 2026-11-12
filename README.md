@@ -1,32 +1,30 @@
 # Appwrite Functions 状态页
 
-一个适配 **Appwrite Cloud Python Functions** 的只读状态页，使用 Python 标准库，无第三方依赖。项目源码不会启动 HTTP 服务器、不监听端口、不依赖 Docker，也不执行部署。主页醒目链接：[mathowvan/appwrite-status](https://github.com/mathowvan/appwrite-status)。
+面向 Appwrite Cloud Python Functions 的只读状态页，使用 Python 标准库，无第三方依赖。仅维护本仓库代码与说明。主页提供公开源码链接：[mathowvan/appwrite-status](https://github.com/mathowvan/appwrite-status)。
 
-## 路由
+## 路由与边界
 
-- `GET /`：中文深色响应式 HTML 状态页，含手动刷新建议、固定工具版本和实例范围说明。
-- `GET /api/status`：JSON 状态数据。
+- `GET /`：中文深色响应式 HTML，固定六卡、公开源码链接。
+- `GET /api/status`：JSON 状态快照。
 - `GET /healthz`：`ok` 文本。
-- 其他路径：404；所有非 GET 方法：405，并返回 `Allow: GET`。
+- 其他路径 404；非 GET 405。
 
-页面无外部脚本、字体、图像、跟踪或自动轮询。没有输入可控制命令、URL、文件路径。代码不读取或回显请求头、请求体、环境变量、主机名、IP 或网络状态；尤其不触碰 `X-Appwrite-key`。
+匿名只读；不检查请求头、请求体或用户环境变量，不读取主机名、IP、网络状态、Appwrite 用户数据、API key 或凭据；不发起外网请求（页面中的源码链接由用户主动点击）。不新增函数/API、区域调整、付费服务或依赖。页面无脚本、外部资源、自动轮询、保活或定时任务。仅通过固定 PATH 查找 curl、wget、git，并各自运行固定版本参数；`shell=False`，执行有超时，除此之外不启动采集子进程。
+
+## 指标范围与降级
+
+所有内容是本次函数执行实例可见的有限读数，不代表主机、套餐、账户配额或独占资源。cgroup 详细项先只读取 `/proc/self/cgroup`，只有 v2 `0::/` 或 v1 对应 memory、cpu/cpuacct 成员路径为 `/` 时，才读取固定根挂载文件；不拼接成员私有路径、不回显成员路径或容器标识。无法验证时省略详细值或返回 null。v1 与 v2 内存统计不混源；限额为 0、`2**60` 及以上哨兵、无限、缺失或无效时不当作有限限额；用量大于限额时不计算百分比或剩余量。Swap 仅报告 v2 的有限 `memory.swap.current` 与 `memory.swap.max` 配对，v1 swap 完全不采集；`max`/不限额不推测。
+
+cgroup CPU 限额与累计统计按验证后的固定层级读取。v2 `cpu.stat` 的微秒时间统一转为秒输出；v1 cpuacct 的纳秒用量转为秒，v1 cpu.stat 周期计数按原计数输出。CPU 统计是累计读数而非实时速率。当前 Python 进程指标来自 `resource.getrusage(RUSAGE_SELF)` 的用户/内核 CPU 秒、Linux maxRSS（转换为字节）及 `/proc/self/status` 白名单中的 VmRSS、VmHWM、VmSize、Threads；VmSize 是虚拟地址空间，不是物理内存。
+
+根挂载磁盘容量用二进制单位展示，并保留 JSON 的 `total_bytes`、`used_bytes`、`free_bytes`、`available_bytes` 与格式化字段及使用率；容量与 inode 分开采集、分别失败降级。inode 可用数使用 `f_favail`，不会将 `f_ffree` 冒充可用数。挂载可能共享，非函数配额。系统与运行时字段包括 Python/实现/指针位数（由指针大小计算）、字节序、OS/架构、OpenSSL；模块载入时长不是 uptime。缺失的新增 HTML 指标不显示；原有关键读数可以表达不可用。JSON 保留既有顶层及资源字段，并扩展 `memory`、`swap`、`cgroup_cpu_stat`、`process`、磁盘字段和运行时字段；消费者应忽略未知字段并允许新增字段为 null。
+
+缓存仅限当前暖 Python 进程，30 秒内返回同一快照。请求触发采集，无后台轮询。范围、挂载隔离和指标可读性不能证明平台租户隔离或实际配额。
 
 ## 本地检查
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3 -W error::ResourceWarning -m unittest discover -s tests -v
 python3 -m compileall -q src tests
 ```
 
-`requirements.txt` 仅说明运行时没有第三方包依赖。此项目**不是**常驻 HTTP 服务或平台 uptime 监控；函数按需调用，每次状态页请求由 Appwrite Functions 运行时执行。`module_age_seconds`（页面显示“函数模块载入时长”）表示当前 Python 状态模块自载入以来经过的时间；它不是系统 uptime、进程 uptime，也不表示函数或服务持续在线。CPU、内存和磁盘读数只反映执行环境可读的 cgroup 与当前挂载，可能不可用或受隔离实现影响；不表示账户配额或独占硬件。固定 `curl`、`wget`、`git` 版本探测并行执行，限定单探测超时并以总等待预算约 0.8 秒结束；暖进程缓存 30 秒，探测结果不因每次调用重复累加延迟。无需自动刷新、轮询或定时任务，避免消耗执行额度或人为保活。
-
-## Appwrite Cloud 部署适配（候选设置，尚未部署）
-
-参考官方开发文档：[Functions - Develop](https://appwrite.io/docs/products/functions/develop)。文档中的 Python 多文件示例使用 `from .utils import add`，入口为 `def main(context)`，响应使用 `context.res.text(...)`；官方响应示例明确支持 `text(body, status, headers)` 形态。此项目按该约定使用 `from .status import ...` 与 `context.req.path` / `context.req.method`。候选设置为：源码根目录保留仓库根目录，入口 `src/main.py`；Python 版本使用 Appwrite 控制台当前可选的 Python 3.x 运行时。入口路径相对于所选源码根目录，不能将根目录改为 `src/` 后仍保留入口的 `src/` 前缀。仅在未来获授权并由操作者确认后，才创建函数、配置域名/HTTP 触发及允许的调用权限。
-
-候选本地构建前测试命令：`python3 -m unittest discover -s tests -v && python3 -m compileall -q src tests`。Appwrite Cloud 的控制台选项、运行时版本可用性、源码根目录映射及构建配置应在真实部署前依当前官方控制台再次核实；这里不提供臆造的 `appwrite.json`，也不硬编码项目 ID、region 或 API key。公开函数 URL/公开执行权限会让任何人都可能调用并消耗额度；部署和公开访问必须在用户确认前停止，不属于本项目的创建或测试步骤。
-
-## 官方资料
-
-- [Appwrite Functions develop](https://appwrite.io/docs/products/functions/develop)：Python 相对导入、`main(context)`、请求路径/方法与 `context.res.text`。
-- [Appwrite brand assets](https://appwrite.io/assets)：品牌色参考中包含 Appwrite Pink `#FD366E`，本页面仅用作点缀色，无需嵌入官方 Logo。
