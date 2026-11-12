@@ -28,6 +28,18 @@ class RoutesTests(unittest.TestCase):
         self.assertIn('href="https://github.com/mathowvan/appwrite-status"', body)
         self.assertIn("按需执行环境", body)
         self.assertIn("style-src 'unsafe-inline'", headers["content-security-policy"])
+        self.assertEqual(body.count("<style>"), 1)
+        self.assertEqual(body.count("</style>"), 1)
+        css = body.split("<style>", 1)[1].split("</style>", 1)[0].strip()
+        self.assertTrue(css.startswith(":root{"))
+        self.assertIn("--bg:#0b0d17", css)
+        self.assertIn("--panel:#111b2a", css)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", css)
+        self.assertIn("@media(max-width:560px)", css)
+        self.assertEqual(body.count('<article class="card">'), 6)
+        self.assertIn("本页面不轮询、不做保活", body)
+        self.assertNotIn("<script", body.lower())
+        self.assertNotIn('http-equiv="refresh"', body.lower())
 
     @mock.patch.object(handler, "get_status", return_value={"x":"y"})
     def test_json(self, _):
