@@ -20,7 +20,7 @@ class Context:
         self.req = Req(method, path)
 
 class RoutesTests(unittest.TestCase):
-    @mock.patch.object(handler, "get_status", return_value={"runtime":{"python":"3.12","os":"Linux","architecture":"x86"},"process_uptime_seconds":4,"resources":{"cpu_limit_cores":1,"memory_limit":"128 MiB","mounted_root_disk":{"free":"1 GiB","total":"2 GiB"}},"tools":{"curl":{"installed":True,"version":"8.0"}},"scope":"temporary"})
+    @mock.patch.object(handler, "get_status", return_value={"runtime":{"python":"3.12","os":"Linux","architecture":"x86"},"module_age_seconds":4,"resources":{"cpu_limit_cores":1,"memory_limit":"128 MiB","mounted_root_disk":{"free":"1 GiB","total":"2 GiB"}},"tools":{"curl":{"installed":True,"version":"8.0"}},"scope":"temporary"})
     def test_root_html_headers_and_repository_link(self, _):
         body, code, headers = handler.main(Context())
         self.assertEqual(code, 200)
@@ -43,13 +43,34 @@ class RoutesTests(unittest.TestCase):
         self.assertEqual((body, code), ("Method Not Allowed\n", 405))
         self.assertEqual(headers["allow"], "GET")
 
-    @mock.patch.object(handler, "get_status", return_value={"runtime":{"python":"<script>alert(1)</script>","os":"Linux","architecture":"x86"},"process_uptime_seconds":1,"resources":{"cpu_limit_cores":None,"memory_limit":"不可用","mounted_root_disk":None},"tools":{},"scope":"safe"})
+    @mock.patch.object(handler, "get_status", return_value={"runtime":{"python":"<script>alert(1)</script>","os":"Linux","architecture":"x86"},"module_age_seconds":1,"resources":{"cpu_limit_cores":None,"memory_limit":"不可用","mounted_root_disk":None},"tools":{},"scope":"safe"})
     def test_html_escapes_variable_content_and_never_exposes_request(self, _):
         body, _, _ = handler.main(Context())
         self.assertNotIn("<script>alert(1)</script>", body)
         self.assertNotIn("DO_NOT_LEAK_KEY", body)
         self.assertNotIn("DO_NOT_LEAK_BODY", body)
         self.assertNotIn("x-appwrite-key", body)
+
+    def test_module_age_field_and_html_label(self):
+        with mock.patch.object(status, "_MODULE_LOADED_AT", 20.0), mock.patch.object(status.time, "monotonic", side_effect=[20.0, 23.5]):
+            with mock.patch.object(status, "_cpu_limit", return_value=None), mock.patch.object(status, "_memory_limit", return_value=None), mock.patch.object(status, "_probe", return_value={"installed":False,"version":None}), mock.patch.object(status.shutil, "disk_usage", side_effect=OSError):
+                data = status._collect()
+        self.assertEqual(data["module_age_seconds"], 3.5)
+        self.assertNotIn("process_uptime_seconds", data)
+        data.update(runtime={"python":"3.12","os":"Linux","architecture":"x86"}, resources={"cpu_limit_cores":None,"memory_limit":"不可用","mounted_root_disk":None}, tools={})
+        self.assertIn("函数模块载入时长", status.render_page(data))
+
+    def test_cpu_limit_rejects_invalid_cgroup_values(self):
+        for cpu_max in ("-1 100000", "0 100000", "100000 0"):
+            with self.subTest(cpu_max=cpu_max), mock.patch("src.status._read", return_value=cpu_max):
+                self.assertIsNone(status._cpu_limit())
+        with mock.patch("src.status._read", return_value=None), mock.patch("src.status._number", side_effect=[-1, 100000]):
+            self.assertIsNone(status._cpu_limit())
+
+    def test_memory_limit_rejects_nonpositive_and_v1_unlimited_sentinel(self):
+        for values in ((0, None), (-1, None), (None, 2**60), (None, 2**63 - 1)):
+            with self.subTest(values=values), mock.patch("src.status._number", side_effect=values):
+                self.assertIsNone(status._memory_limit())
 
 class FormattingAndProbeTests(unittest.TestCase):
     def test_binary_units_and_human_duration(self):
