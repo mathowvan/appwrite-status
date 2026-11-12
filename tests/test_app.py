@@ -1,11 +1,29 @@
 import json
 import math
 import subprocess
+import socket
 import unittest
 from unittest import mock
 
 from src import main as handler
 from src import status
+
+
+def network_fixture():
+    return {"scope": "local_only: current network namespace; not public egress or inbound reachability", "local_status": "available",
+            "external_queries": False, "note": "local read-only ioctl and /proc/net data only; no external queries",
+            "interfaces": [{"name": "eth0", "source": "current network namespace", "ipv4": "192.0.2.10", "ipv4_prefix_length": 24,
+                            "ipv6": ["2001:db8::10"], "mtu": 1500, "admin_up": True, "running": True,
+                            "counters": {"rx_bytes": 1024, "tx_bytes": 2048, "rx_packets": 5, "tx_packets": 3,
+                                         "rx_errors": 0, "tx_errors": 0, "rx_dropped": 0, "tx_dropped": 0}}],
+            "default_ipv4_gateway": {"ipv4": "192.0.2.1", "interface": "eth0"}}
+
+
+class NoExternalNetworkMixin:
+    def setUp(self):
+        patcher = mock.patch.object(status, "collect_network", side_effect=network_fixture)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 class Req:
@@ -40,10 +58,10 @@ def fixture():
                                 "periods": 8, "throttled_periods": 3, "throttled_seconds": .1},
             "process": {"cpu_user_seconds": .001, "cpu_system_seconds": .002, "max_rss_bytes": 1024,
                         "proc_status_bytes_or_count": {"VmRSS": 10240, "VmHWM": 20480, "VmSize": 40960, "Threads": 2}},
-            "swap": None}, "tools": {"curl": {"installed": True, "version": "8.0"}}, "scope": "temporary"}
+            "swap": None}, "tools": {"curl": {"installed": True, "version": "8.0"}}, "scope": "temporary", "network": network_fixture()}
 
 
-class RoutesTests(unittest.TestCase):
+class RoutesTests(NoExternalNetworkMixin, unittest.TestCase):
     @mock.patch.object(handler, "get_status", return_value=fixture())
     def test_root_html_headers_layout_and_repo_link(self, _):
         body, code, headers = handler.main(Context())
@@ -102,7 +120,7 @@ class RoutesTests(unittest.TestCase):
         self.assertEqual(body.count('<article class="card">'), 6)
 
 
-class MetricsTests(unittest.TestCase):
+class MetricsTests(NoExternalNetworkMixin, unittest.TestCase):
     def test_scope_gate_requires_fixed_proc_membership_root(self):
         for value in ("0::/tenant/abc", "0::/", "1:memory:/", "2:cpu,cpuacct:/", "2:cpu,cpuacct:/nested"):
             with self.subTest(value=value), mock.patch.object(status, "_read", return_value=value):
@@ -207,7 +225,7 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(collect.call_count, 2)
 
 
-class AdditionalRegressionTests(unittest.TestCase):
+class AdditionalRegressionTests(NoExternalNetworkMixin, unittest.TestCase):
     def test_probe_timeout_and_fixed_execution_environment(self):
         with mock.patch.object(status.shutil, "which", return_value="/usr/bin/curl"), mock.patch.object(status.subprocess, "run", side_effect=subprocess.TimeoutExpired("curl", .55)) as run:
             self.assertEqual(status._probe("curl", ("--version",), r"^curl\s+([\w.+-]+)")["version"], "探测超时或不可用")
@@ -273,6 +291,44 @@ class AdditionalRegressionTests(unittest.TestCase):
             self.assertEqual(handler.main(context)[1], 200)
             context.req.path = "/api/status"
             self.assertEqual(handler.main(context)[1], 200)
+
+
+class NetworkIntegrationTests(NoExternalNetworkMixin, unittest.TestCase):
+    def test_local_only_six_cards_supported_values_and_security_range(self):
+        body = status.render_page(fixture())
+        self.assertEqual(body.count('<article class="card">'), 6)
+        for text in ("网络与 IP", "192.0.2.10/24", "2001:db8::10", "MTU 1500", "1.0 KiB / 2.0 KiB", "默认网关", "local_only", "不代表公网地址或入站可达", "可能临时或共享"):
+            self.assertIn(text, body)
+        for forbidden in ("ipify", "egress_ip", "出口观测", "出口查询"):
+            self.assertNotIn(forbidden, body)
+        self.assertNotIn("None", body); self.assertNotIn("<script", body)
+
+    def test_missing_fields_and_network_values_are_html_escaped(self):
+        data = fixture(); data["network"] = {"interfaces": [{"name": "<img src=x>", "ipv4": "192.0.2.4"}], "scope": "<img src=x>"}
+        body = status.render_page(data)
+        self.assertNotIn("<img src=x>", body); self.assertIn("&lt;img", body)
+        self.assertEqual(body.count('<article class="card">'), 6)
+        data["network"] = {"interfaces": [], "local_status": "unavailable", "external_queries": False}
+        body = status.render_page(data)
+        self.assertIn("本地接口枚举", body)
+        self.assertIn("不可用", body)
+
+    def test_never_create_tcp_socket_or_use_urllib_during_local_collection(self):
+        from src import network
+        original = network.socket.socket
+        def guarded(family, kind, *args, **kwargs):
+            if kind == socket.SOCK_STREAM:
+                raise AssertionError("TCP connection prohibited")
+            return original(family, kind, *args, **kwargs)
+        with mock.patch.object(network.socket, "socket", side_effect=guarded), mock.patch("urllib.request.urlopen", side_effect=AssertionError("urllib prohibited")):
+            network.collect_network()
+
+    def test_non_status_routes_never_collect_network(self):
+        with mock.patch.object(handler, "get_status", side_effect=AssertionError("unnecessary status collection")), \
+             mock.patch.object(status, "collect_network", side_effect=AssertionError("unnecessary local network collection")):
+            for method, path, code in (("GET", "/healthz", 200), ("GET", "/missing", 404), ("POST", "/api/status", 405)):
+                with self.subTest(method=method, path=path):
+                    self.assertEqual(handler.main(Context(method, path))[1], code)
 
 
 if __name__ == "__main__":
