@@ -141,5 +141,64 @@ def render_page(status):
     disk_text = html.escape(f"{disk['free']} 可用 / {disk['total']} 总量" if disk else "不可用")
     tools = "".join(f"<li><span>{html.escape(name)}</span><strong>{html.escape(info['version'] or ('已安装' if info['installed'] else '未安装'))}</strong></li>" for name, info in status["tools"].items())
     disclaimer = html.escape(status["scope"])
-    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Appwrite Functions · 状态</title><style>
-<style>:root{{--bg:#101014;--panel:#19191d;--line:#303037;--text:#f4f2f4;--muted:#aaa7ae;--pink:#fd366e}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}}main{{width:min(940px,100% - 32px);margin:auto;padding:40px 0}}.card,li,.notice{{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:16px;margin:12px 0}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}}.label{{color:var(--muted)}}.value{{font-size:1.3rem;font-weight:700}}a{{color:#ff89a9}}</style></head><body><main><header><div><div>APPWRITE CLOUD · FUNCTIONS</div><h1>函数运行状态</h1><p>按需执行环境的只读快照</p></div><a href="https://github.com/mathowvan/appwrite-status">GitHub 项目 ↗</a></header><section class="notice"><strong>临时实例范围</strong><br>{disclaimer}<br>手动刷新以获取新快照；本页面不轮询、不做保活。</section><section class="grid"><article class="card"><div class="label">函数模块载入时长</div><div class="value">{module_age}</div></article><article class="card"><div class="label">Python · 操作系统 · 架构</div><div class="value">{py}<br>{os_name} · {arch}</div></article><article class="card"><div class="label">可读 CPU 限额（核）</div><div class="value">{cpu}</div></article><article class="card"><div class="label">可读内存限制</div><div class="value">{mem}</div></article><article class="card"><div class="label">当前根挂载磁盘</div><div class="value">{disk_text}</div></article></section><h2>固定工具探测</h2><ul>{tools}</ul><footer>只展示本地安全读数。资源数值不代表 Appwrite 账户配额、独占硬件或函数可用性。<br><a href="/api/status">JSON 状态 API</a> · <a href="/healthz">健康检查</a></footer></main></body></html>'''
+    return f'''<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Appwrite Functions · 状态</title>
+<style>
+:root{{--bg:#0b0d17;--panel:#111b2a;--line:#2a3543;--text:#edf2f8;--muted:#a7b4c5;--accent:#a8caff}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
+main{{width:min(1060px,calc(100% - 40px));margin:0 auto;padding:52px 0 36px}}
+header{{margin-bottom:32px}}
+.eyebrow{{color:var(--muted);font-size:.78rem;letter-spacing:.12em}}
+h1{{margin:8px 0 12px;font-size:clamp(2rem,4vw,2.75rem);line-height:1.2;letter-spacing:-.03em}}
+header p{{margin:0 0 14px;color:var(--muted)}}
+.source{{color:var(--muted);overflow-wrap:anywhere}}
+a{{color:var(--accent);text-underline-offset:3px}}
+a:hover{{color:#d2e3ff}}
+a:focus-visible{{outline:2px solid var(--accent);outline-offset:4px;border-radius:2px}}
+.grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}}
+.card{{min-width:0;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:18px;box-shadow:0 0 0 1px #ffffff03 inset}}
+.card h2{{margin:0 0 18px;color:var(--accent);font-size:1.12rem;line-height:1.35}}
+dl,ul{{margin:0;padding:0}}
+.row,li{{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid #ffffff12}}
+.row:last-child,li:last-child{{padding-bottom:0;border-bottom:0}}
+.row:first-child,li:first-child{{padding-top:0}}
+dt,li span{{color:var(--muted);min-width:0}}
+dd{{margin:0}}
+dd,li strong{{text-align:right;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}}
+.single{{display:block}}
+.single dd{{margin-top:12px;text-align:left;font-size:1.3rem}}
+ul{{list-style:none}}
+.notice{{margin:24px 0 0;padding:18px 20px;border:1px solid var(--line);border-radius:14px;color:var(--muted);line-height:1.7}}
+.notice strong{{color:var(--text);font-weight:600}}
+footer{{margin-top:22px;color:var(--muted);font-size:.875rem;line-height:1.8}}
+@media(max-width:820px){{.grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
+@media(max-width:560px){{main{{width:calc(100% - 32px);padding-top:30px}}header{{margin-bottom:24px}}.grid{{grid-template-columns:minmax(0,1fr);gap:14px}}.card{{padding:18px}}.card h2{{margin-bottom:16px}}.notice{{padding:16px}}}}
+</style>
+</head>
+<body>
+<main>
+<header>
+<div class="eyebrow">APPWRITE CLOUD · FUNCTIONS</div>
+<h1>函数运行状态</h1>
+<p>按需执行环境的只读快照</p>
+<div class="source">公开源码仓库：<a href="https://github.com/mathowvan/appwrite-status">github.com/mathowvan/appwrite-status</a></div>
+</header>
+<section class="grid" aria-label="运行环境状态">
+<article class="card"><h2>内存</h2><dl><div class="row single"><dt>可读内存限制</dt><dd>{mem}</dd></div></dl></article>
+<article class="card"><h2>磁盘</h2><dl><div class="row single"><dt>当前根挂载磁盘</dt><dd>{disk_text}</dd></div></dl></article>
+<article class="card"><h2>CPU</h2><dl><div class="row single"><dt>可读 CPU 限额（核）</dt><dd>{cpu}</dd></div></dl></article>
+<article class="card"><h2>系统与运行时</h2><dl><div class="row"><dt>Python</dt><dd>{py}</dd></div><div class="row"><dt>操作系统</dt><dd>{os_name}</dd></div><div class="row"><dt>架构</dt><dd>{arch}</dd></div></dl></article>
+<article class="card"><h2>模块时间</h2><dl><div class="row single"><dt>函数模块载入时长</dt><dd>{module_age}</dd></div></dl></article>
+<article class="card"><h2>固定工具探测</h2><ul>{tools}</ul></article>
+</section>
+<section class="notice"><strong>临时实例范围</strong><br>{disclaimer}<br>手动刷新以获取新快照；本页面不轮询、不做保活。</section>
+<footer>只展示本地安全读数。资源数值不代表 Appwrite 账户配额、独占硬件或函数可用性。<br><a href="/api/status">JSON 状态 API</a> · <a href="/healthz">健康检查</a></footer>
+</main>
+</body>
+</html>'''
