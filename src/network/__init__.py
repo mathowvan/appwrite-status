@@ -1,4 +1,4 @@
-"""Bounded, read-only network facts for the current Linux network namespace."""
+"""Bounded, read-only facts from the current Linux network namespace only."""
 from __future__ import annotations
 
 import fcntl
@@ -6,19 +6,11 @@ import ipaddress
 import re
 import socket
 import struct
-import threading
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 
 _MAX_INTERFACES = 16
 _MAX_FILE = 32768
-_PROBE_TIMEOUT = 1.2
-_URL = "https://api.ipify.org"
 _IFACE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
-_cache_lock = threading.Lock()
-_probe_attempted = False
-_cache_result = None
 
 
 def _read_fixed(path, limit=_MAX_FILE):
@@ -109,8 +101,7 @@ def _netdev():
         if ":" not in line:
             continue
         name, values = line.split(":", 1)
-        name = name.strip()
-        fields = values.split()
+        name, fields = name.strip(), values.split()
         if not _IFACE.fullmatch(name) or len(fields) != 16:
             continue
         try:
@@ -145,53 +136,8 @@ def _gateway():
     return None
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
-def _probe_egress(opener=None):
-    """One fixed HTTPS request; no proxy, redirect, retry, or fallback.
-
-    The socket timeout bounds connection/reads, not system DNS resolution time.
-    """
-    try:
-        if opener is None:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
-        request = urllib.request.Request(_URL, headers={"Accept": "text/plain"}, method="GET")
-        with opener.open(request, timeout=_PROBE_TIMEOUT) as response:
-            if getattr(response, "status", 200) != 200:
-                return None
-            body = response.read(129)
-        if len(body) > 128:
-            return None
-        text = body.decode("ascii").strip()
-        parsed = ipaddress.ip_address(text)
-        if not parsed.is_global or parsed.is_multicast or parsed.is_unspecified or parsed.is_reserved or str(parsed) != text:
-            return None
-        return {"ip": str(parsed), "family": parsed.version, "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "provider": "api.ipify.org", "source": "single fixed HTTPS egress probe", "shared_or_transient": True,
-                "warning": "egress IP may be shared or transient"}
-    except (OSError, ValueError, UnicodeError, urllib.error.URLError, TimeoutError):
-        return None
-
-
-def _cached_egress(opener=None):
-    """Make at most one external probe in this warm process, including failures."""
-    global _probe_attempted, _cache_result
-    with _cache_lock:
-        if _probe_attempted:
-            return dict(_cache_result) if _cache_result is not None else None
-        _probe_attempted = True
-        try:
-            _cache_result = _probe_egress(opener)
-        except Exception:
-            _cache_result = None
-        return dict(_cache_result) if _cache_result is not None else None
-
-
-def collect_network(*, opener=None):
-    """Collect local namespace data and cached-on-request public egress IP info."""
+def collect_network():
+    """Collect only local namespace data. Never performs external queries."""
     try:
         interfaces, local_status = _interfaces()
     except Exception:
@@ -207,16 +153,11 @@ def collect_network(*, opener=None):
         gateway = _gateway()
     except Exception:
         gateway = None
-    try:
-        public_ip = _cached_egress(opener=opener)
-    except Exception:
-        public_ip = None
     result = {"collected_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-              "scope": "current network namespace; interfaces, addresses and egress may be shared or transient",
+              "scope": "local_only: current network namespace; not public egress or inbound reachability",
               "interfaces": interfaces, "local_status": local_status, "interfaces_limit": _MAX_INTERFACES,
-              "egress_ip": public_ip, "egress_status": "available" if public_ip else "unavailable",
-              "egress_provider": "api.ipify.org", "egress_probe_policy": "at most one attempt per warm process; failures are not retried",
-              "note": "request-triggered only; no polling, scanning, retries or keepalive"}
+              "external_queries": False,
+              "note": "local read-only ioctl and /proc/net data only; no external queries, polling, scanning, retries or keepalive"}
     if gateway is not None:
         result["default_ipv4_gateway"] = gateway
     return result
